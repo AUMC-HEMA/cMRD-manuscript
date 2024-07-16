@@ -1,0 +1,41 @@
+---
+title: "Creating annotated FCS files"
+author:
+- name: T.R. Mocking
+output:
+  BiocStyle::html_document
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+RBM18_path <- "<ENTER PATH>"
+RBM18_FCS_path <- "<ENTER PATH>"
+RBM18_GMMref_label_path <- "<ENTER PATH>"
+RBM18_annotated_path <- "<ENTER PATH>"
+```
+
+# RBM18
+
+```{r}
+df <- read.csv(paste0(RBM18_path, "sample_info.csv"))
+
+for (sample_id in df$RBM18_ID){
+  print(sample_id)
+  ff <- flowCore::read.FCS(paste0(RBM18_FCS_path, sample_id, ".fcs"), truncate_max_range = FALSE)
+  labels <- read.csv(paste0(RBM18_GMMref_label_path, sample_id, ".csv"))
+  ff@exprs <- ff@exprs[ff@exprs[, "event_ID"] %in% labels$event_ID, ]
+  for (colname in c("Blast", "GMMclf", "GMMref_manual_component", "GMMref_GMMclf_component")){
+    col <- as.matrix(labels[, colname])
+    colnames(col) <- colname
+    ff <- flowCore::fr_append_cols(ff, col)
+  }
+  flowCore::write.FCS(ff, paste0(RBM18_annotated_path, sample_id, ".fcs"))
+}
+```
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```

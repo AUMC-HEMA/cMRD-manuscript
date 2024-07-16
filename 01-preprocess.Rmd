@@ -1,0 +1,159 @@
+---
+title: "Pre-processing of cMRD data"
+author:
+- name: T.R. Mocking
+output:
+  BiocStyle::html_document
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+library(flowCore)
+library(PeacoQC)
+
+# CytoTools can be obtained from Github with devtools
+# devtools::install_github("AUMC-HEMA/CytoTools")
+library(CytoTools)
+```
+
+```{r}
+# Input
+BLAST110_path <- "<ENTER PATH>"
+LAIP29_path <- "<ENTER PATH>"
+RBM18_path <- "<ENTER PATH>"
+
+# Obtain a list of all the files
+BLAST110_info <- read.csv(paste0(BLAST110_path, "sample_info.csv"))
+LAIP29_info <- read.csv(paste0(LAIP29_path, "sample_info.csv"))
+RBM18_info <- read.csv(paste0(RBM18_path, "sample_info.csv"))
+
+# Output
+transform_path <- "data/transform"
+BLAST110_export_path <- "data/BLAST110"
+LAIP29_export_path <- "data/LAIP29"
+RBM18_export_path <- "data/RBM18"
+```
+
+# Determine optimal logicle transform
+
+Optimal linearization widths are based on NBM samples
+
+```{r}
+if (!dir.exists(transform_path)){
+  dir.create(transform_path, recursive = TRUE)
+}
+
+for (tube in unique(BLAST110_info$tube)){
+  transform_file <- paste0(transform_path, "/", tube, "_logicleTransform.rds")
+  if (file.exists(transform_file)) {
+    next
+  }
+  paths <- BLAST110_info[(BLAST110_info$sample_type == "NBM") & (BLAST110_info$tube == tube),]$BLAST110_ID
+  paths <- paste0(BLAST110_path, "FCS/", paths, ".fcs")
+  tfList <- CytoTools::getLogicle(paths)
+  saveRDS(tfList, transform_file)
+}
+```
+
+# Pre-process
+
+```{r}
+preprocessFCS <- function(path, tube, FCS_export_path){
+  ff <- read.FCS(path, truncate_max_range = FALSE)
+  # Remove margin events
+  cols <- colnames(ff)
+  ff <- PeacoQC::RemoveMargins(ff, c("FSC-A", "FSC-H", "SSC-A", "SSC-H"))
+  # Remove the "Original ID" column added by PeacoQC
+  ff <- ff[, cols]
+
+  # Remove doublets
+  doublets <- CytoTools::gateDoublets(ff)
+  singlet_vector <- doublets[, "PeacoQC_doublet"] == 0 & doublets[, "flowStats_doublet"] == 0
+  ff@exprs <- ff@exprs[singlet_vector, ]
+  
+  # Compensate
+  ff <- compensate(ff, ff@description$SPILL)
+  # Transform based on pre-calculated transformations
+  tfList <- readRDS(paste0(transform_path, "/", tube, "_logicleTransform.rds"))
+  ff <- transform(ff, tfList)
+  
+  # Add MinMax scaled variants of scatters + markers
+  cols <- c(c('FSC-A', 'FSC-H', 'SSC-A', 'SSC-H'), colnames(ff@description$SPILL))
+  scaled_exprs <-apply(flowCore::exprs(ff)[,cols], 2, function(x){
+    return((x - quantile(x, 0.01)) / (quantile(x, 0.99) - quantile(x, 0.01)))
+  })
+  # Add "_scaled" suffix to each column
+  colnames(scaled_exprs) <- paste0(colnames(scaled_exprs), "_scaled")
+  # Add scaled parameters to the FCS file
+  for (scaled_channel in colnames(scaled_exprs)){
+    events <- as.matrix(scaled_exprs[,scaled_channel])
+    colnames(events) <- scaled_channel
+    ff <- fr_append_cols(ff, events)
+  }
+  write.FCS(ff, FCS_export_path)
+}
+```
+
+## BLAST110
+
+```{r}
+if (!dir.exists(BLAST110_export_path)){
+  dir.create(paste0(BLAST110_export_path, "/FCS/"), recursive = TRUE)
+}
+
+for (i in 1:nrow(BLAST110_info)) {
+  print(i)
+  sample_name <- BLAST110_info[i, 1]
+  path <- paste0(BLAST110_path, "FCS/", sample_name, ".fcs")
+  tube <- BLAST110_info[i, "tube"]
+  FCS_export_path <- paste0(BLAST110_export_path, "/FCS/", sample_name, "_preprocessed.fcs")
+  if (!file.exists(FCS_export_path)) {
+    preprocessFCS(path, tube, FCS_export_path)
+  }
+}
+```
+
+## LAIP29
+
+```{r}
+if (!dir.exists(paste0(LAIP29_export_path, "/FCS/"))){
+  dir.create(paste0(LAIP29_export_path, "/FCS/"), recursive = TRUE)
+}
+
+for (i in 1:nrow(LAIP29_info)) {
+  print(i)
+  sample_name <- LAIP29_info[i, 1]
+  path <- paste0(LAIP29_path, "FCS/", sample_name, ".fcs")
+  tube <- LAIP29_info[i, "tube"]
+  FCS_export_path <- paste0(LAIP29_export_path, "/FCS/", sample_name, "_preprocessed.fcs")
+  if (!file.exists(FCS_export_path)) {
+    preprocessFCS(path, tube, FCS_export_path)
+  }
+}
+```
+
+## RBM18
+
+```{r}
+if (!dir.exists(paste0(RBM18_export_path, "/FCS/"))){
+  dir.create(paste0(RBM18_export_path, "/FCS/"), recursive = TRUE)
+}
+
+for (i in 1:nrow(RBM18_info)) {
+  print(i)
+  sample_name <- RBM18_info[i, 1]
+  path <- paste0(RBM18_path, "FCS/", sample_name, ".fcs")
+  tube <- RBM18_info[i, "tube"]
+  FCS_export_path <- paste0(RBM18_export_path, "/FCS/", sample_name, "_preprocessed.fcs")
+  if (!file.exists(FCS_export_path)) {
+    preprocessFCS(path, tube, FCS_export_path)
+  }
+}
+```
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
